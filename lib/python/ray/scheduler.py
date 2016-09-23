@@ -41,7 +41,7 @@ def function_id_and_dependencies(task_info):
 def can_schedule(worker_id, task_id):
   task_info = cached_task_info[task_id]
   function_id = task_info["function_id"]
-  if function_id not in cached_function_table.keys():
+  if not cached_function_table.has_key(function_id):
     #print "Function {} is not in cached_function_table.keys()".format(function_id)
     return False
   if cached_worker_info[worker_id]["export_counter"] < cached_function_info[function_id]["export_counter"]:
@@ -49,7 +49,7 @@ def can_schedule(worker_id, task_id):
   if worker_id not in cached_function_table[function_id]:
     return False
   for obj_id in task_info["dependencies"]:
-    if obj_id not in cached_object_table.keys():
+    if not cached_object_table.has_key(obj_id):
       return False
   return True
 
@@ -113,7 +113,7 @@ if __name__ == "__main__":
     elif msg["channel"].startswith("__keyspace@0__:FunctionTable"):
       function_table_key = msg["channel"].split(":", 1)[1]
       function_id = function_table_key.split(":", 1)[1]
-      if function_id not in cached_function_table.keys():
+      if not cached_function_table.has_key(function_id):
         cached_function_table[function_id] = []
       worker_id = redis_client.lindex(function_table_key, len(cached_function_table[function_id]))
       cached_function_table[function_id].append(worker_id)
