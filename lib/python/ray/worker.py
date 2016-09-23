@@ -461,8 +461,8 @@ class Worker(object):
 
       function_to_run_id = np.random.randint(0, 1000)
       key = "FunctionsToRun:{}".format(function_to_run_id)
-      self.redis_client.hset(key, "function_id", function_to_run_id)
-      self.redis_client.hset(key, "function", pickling.dumps(function))
+      self.redis_client.hmset(key, {"function_id": function_to_run_id,
+                                    "function": pickling.dumps(function)})
       self.redis_client.rpush("Exports", key)
     self.export_counter += 1
 
@@ -709,8 +709,9 @@ def print_error_messages(worker=global_worker):
       # task_info.
       pass
 
-def process_remote_function(function_id, function_name, serialized_function, num_return_vals, module, worker=global_worker):
+def fetch_and_process_remote_function(key, worker=global_worker):
   """Import a remote function."""
+  function_id, function_name, serialized_function, num_return_vals, module = worker.redis_client.hmget(key, ["function_id", "name", "function", "num_return_vals", "module"])
   try:
     function = pickling.loads(serialized_function)
   except:
@@ -731,8 +732,9 @@ def process_remote_function(function_id, function_name, serialized_function, num
     # TODO(rkn): The below needs to identify the worker somehow...
     worker.redis_client.rpush("FunctionTable:{}".format(function_id), worker.worker_id)
 
-def process_reusable_variable(reusable_variable_name, serialized_initializer, serialized_reinitializer, worker=global_worker):
+def fetch_and_process_reusable_variable(key, worker=global_worker):
   """Import a reusable variable."""
+  reusable_variable_name, serialized_initializer, serialized_reinitializer = worker.redis_client.hmget(key, ["name", "initializer", "reinitializer"])
   try:
     initializer = pickling.loads(serialized_initializer)
     reinitializer = pickling.loads(serialized_reinitializer)
@@ -747,8 +749,9 @@ def process_reusable_variable(reusable_variable_name, serialized_initializer, se
   else:
     _logger().info("Successfully imported reusable variable {}.".format(reusable_variable_name))
 
-def process_function_to_run(serialized_function, worker=global_worker):
+def fetch_and_process_function_to_run(key, worker=global_worker):
   """Run on arbitrary function on the worker."""
+  serialized_function, = worker.redis_client.hmget(key, ["function"])
   try:
     # Deserialize the function.
     function = pickling.loads(serialized_function)
@@ -767,11 +770,33 @@ def process_function_to_run(serialized_function, worker=global_worker):
 
 def import_thread(worker):
   worker.pubsub_client = worker.redis_client.pubsub()
+  # Exports that are published after the call to pubsub_client.psubscribe and
+  # before the call to pubsub_client.listen will still be processed in the loop.
   worker.pubsub_client.psubscribe("__keyspace@0__:Exports")
 
-  num_imported = 0
   worker_info_key = "WorkerInfo:{}".format(worker.worker_id)
   worker.redis_client.hset(worker_info_key, "export_counter", 0)
+  num_imported = 0
+
+  # Get the exports that occurred before the call to psubscribe.
+  try:
+    worker.lock.acquire()
+    export_keys = worker.redis_client.lrange("Exports", 0, -1)
+    if len(export_keys) > 0:
+      print "Some exports happened before the worker started."
+    for key in export_keys:
+      if key.startswith("RemoteFunction"):
+        fetch_and_process_remote_function(key, worker=worker)
+      elif key.startswith("ReusableVariables"):
+        fetch_and_process_reusable_variable(key, worker=worker)
+      elif key.startswith("FunctionsToRun"):
+        fetch_and_process_function_to_run(key, worker=worker)
+      else:
+        raise Exception("This code should be unreachable.")
+      worker.redis_client.hincrby(worker_info_key, "export_counter", 1)
+      num_imported += 1
+  finally:
+    worker.lock.release()
 
   for msg in worker.pubsub_client.listen():
     try:
@@ -784,22 +809,12 @@ def import_thread(worker):
       for i in range(num_imported, num_imports):
         key = worker.redis_client.lindex("Exports", i)
         num_imported += 1
-        if key.split(":")[0] == "RemoteFunction":
-          remote_function_id = worker.redis_client.hget(key, "function_id")
-          remote_function_name = worker.redis_client.hget(key, "name")
-          remote_function_module = worker.redis_client.hget(key, "module")
-          serialized_remote_function = worker.redis_client.hget(key, "function")
-          num_return_vals = int(worker.redis_client.hget(key, "num_return_vals"))
-          process_remote_function(remote_function_id, remote_function_name, serialized_remote_function, num_return_vals, remote_function_module, worker=worker)
-        elif key.split(":")[0] == "ReusableVariables":
-          reusable_variable_name = worker.redis_client.hget(key, "name")
-          serialized_initializer = worker.redis_client.hget(key, "initializer")
-          serialized_reinitializer = worker.redis_client.hget(key, "reinitializer")
-          process_reusable_variable(reusable_variable_name, serialized_initializer, serialized_reinitializer, worker=worker)
-        elif key.split(":")[0] == "FunctionsToRun":
-          function_id = worker.redis_client.hget(key, "function_id")
-          serialized_function = worker.redis_client.hget(key, "function")
-          process_function_to_run(serialized_function, worker=worker)
+        if key.startswith("RemoteFunction"):
+          fetch_and_process_remote_function(key, worker=worker)
+        elif key.startswith("ReusableVariables"):
+          fetch_and_process_reusable_variable(key, worker=worker)
+        elif key.startswith("FunctionsToRun"):
+          fetch_and_process_function_to_run(key, worker=worker)
         else:
           raise Exception("This code should be unreachable.")
         worker.redis_client.hincrby(worker_info_key, "export_counter", 1)
@@ -1180,10 +1195,9 @@ def _export_reusable_variable(name, reusable, worker=global_worker):
 
   reusable_variable_id = name
   key = "ReusableVariables:{}".format(reusable_variable_id)
-  worker.redis_client.hset(key, "name", name)
-  worker.redis_client.hset(key, "initializer", pickling.dumps(reusable.initializer))
-  worker.redis_client.hset(key, "reinitializer", pickling.dumps(reusable.reinitializer))
-
+  worker.redis_client.hmset(key, {"name": name,
+                                  "initializer": pickling.dumps(reusable.initializer),
+                                  "reinitializer": pickling.dumps(reusable.reinitializer)})
   worker.redis_client.rpush("Exports", key)
   worker.export_counter += 1
 
