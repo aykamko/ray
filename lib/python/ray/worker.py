@@ -3,7 +3,6 @@ import sys
 import time
 import traceback
 import copy
-import logging
 import funcsigs
 import numpy as np
 import colorama
@@ -483,9 +482,6 @@ reinitialize these variables after they are used so that changes to their state
 made by one task do not affect other tasks.
 """
 
-logger = logging.getLogger("ray")
-"""Logger: The logging object for the Python worker code."""
-
 object_fixtures = weakref.WeakValueDictionary()
 """WeakValueDictionary: The mapping from ObjectID to ObjectFixture object.
 
@@ -719,7 +715,6 @@ def fetch_and_process_remote_function(key, worker=global_worker):
     # If an exception was thrown when the remote function was imported, we
     # record the traceback and notify the scheduler of the failure.
     traceback_str = format_error_message(traceback.format_exc())
-    _logger().info("Failed to import remote function {}. Failed with message: \n\n{}\n".format(function_name, traceback_str))
     # Notify the scheduler that the remote function failed to import.
     worker.redis_client.rpush("Failures", traceback_str)
   else:
@@ -727,7 +722,6 @@ def fetch_and_process_remote_function(key, worker=global_worker):
     function.__module__ = module
     function_name = "{}.{}".format(function.__module__, function.__name__)
     worker.functions[function_id] = remote(num_return_vals=num_return_vals)(function)
-    _logger().info("Successfully imported remote function {}.".format(function_name))
     # Noify the scheduler that the remote function imported successfully.
     # We pass an empty error message string because the import succeeded.
     # TODO(rkn): The below needs to identify the worker somehow...
@@ -744,11 +738,10 @@ def fetch_and_process_reusable_variable(key, worker=global_worker):
     # If an exception was thrown when the reusable variable was imported, we
     # record the traceback and notify the scheduler of the failure.
     traceback_str = format_error_message(traceback.format_exc())
-    _logger().info("Failed to import reusable variable {}. Failed with message: \n\n{}\n".format(reusable_variable_name, traceback_str))
     # Notify the scheduler that the reusable variable failed to import.
     worker.redis_client.rpush("Failures", traceback_str)
   else:
-    _logger().info("Successfully imported reusable variable {}.".format(reusable_variable_name))
+    pass
 
 def fetch_and_process_function_to_run(key, worker=global_worker):
   """Run on arbitrary function on the worker."""
@@ -762,12 +755,11 @@ def fetch_and_process_function_to_run(key, worker=global_worker):
     # If an exception was thrown when the function was run, we record the
     # traceback and notify the scheduler of the failure.
     traceback_str = traceback.format_exc()
-    _logger().info("Failed to run function on worker. Failed with message: \n\n{}\n".format(traceback_str))
     # Notify the scheduler that running the function failed.
     name = function.__name__  if "function" in locals() and hasattr(function, "__name__") else ""
     worker.redis_client.rpush("Failures", traceback_str)
   else:
-    _logger().info("Successfully ran function on worker.")
+    pass
 
 def import_thread(worker):
   worker.pubsub_client = worker.redis_client.pubsub()
@@ -863,9 +855,6 @@ def connect(node_ip_address, redis_address, object_store_name, object_store_mana
     t.daemon = True
     t.start()
 
-  random_string = "".join(np.random.choice(list(string.ascii_uppercase + string.digits)) for _ in range(10))
-  cpp_log_file_name = config.get_log_file_path("-".join(["worker", random_string, "c++"]) + ".log")
-  python_log_file_name = config.get_log_file_path("-".join(["worker", random_string]) + ".log")
   # If this is a driver running in SCRIPT_MODE, start a thread to print error
   # messages asynchronously in the background. Ideally the scheduler would push
   # messages to the driver's worker service, but we ran into bugs when trying to
@@ -880,16 +869,6 @@ def connect(node_ip_address, redis_address, object_store_name, object_store_mana
     t.start()
   """
   worker.set_mode(mode)
-  FORMAT = "%(asctime)-15s %(message)s"
-  # Configure the Python logging module. Note that if we do not provide our own
-  # logger, then our logging will interfere with other Python modules that also
-  # use the logging module.
-  log_handler = logging.FileHandler(python_log_file_name)
-  log_handler.setLevel(logging.DEBUG)
-  log_handler.setFormatter(logging.Formatter(FORMAT))
-  _logger().addHandler(log_handler)
-  _logger().setLevel(logging.DEBUG)
-  _logger().propagate = False
   if mode in [SCRIPT_MODE, SILENT_MODE]:
     # Add the directory containing the script that is running to the Python
     # paths of the workers. Also add the current directory. Note that this
@@ -1096,7 +1075,6 @@ def main_loop(worker=global_worker):
       store_outputs_in_objstore(return_object_ids, failure_objects, worker)
       # Notify the scheduler that the task failed.
       worker.redis_client.rpush("Failures", str(failure_object))
-      _logger().info("While running function {}, worker threw exception with message: \n\n{}\n".format(function_name, str(failure_object)))
     # Notify the scheduler that the task is done. This happens regardless of
     # whether the task succeeded or failed.
     worker.redis_client.publish("ReadyForNewTask", worker.worker_id)
@@ -1109,7 +1087,6 @@ def main_loop(worker=global_worker):
       # We record the traceback and notify the scheduler.
       traceback_str = format_error_message(traceback.format_exc())
       worker.redis_client.rpush("Failures", traceback_str)
-      _logger().info("While attempting to reinitialize the reusable variables after running function {}, the worker threw exception with message: \n\n{}\n".format(function_name, traceback_str))
 
   num_tasks = 0
 
@@ -1172,15 +1149,6 @@ def _mode(worker=global_worker):
   """
   return worker.mode
 
-def _logger():
-  """Return the logger object.
-
-  We use this wrapper because so that functions which do logging can be pickled.
-  Normally a logger object is specific to a machine (it opens a local file), and
-  so cannot be pickled.
-  """
-  return logger
-
 def _export_reusable_variable(name, reusable, worker=global_worker):
   """Export a reusable variable to the workers. This is only called by a driver.
 
@@ -1242,11 +1210,9 @@ def remote(*args, **kwargs):
           return objectids
       def func_executor(arguments):
         """This gets run when the remote function is executed."""
-        _logger().info("Calling function {}".format(func.__name__))
         start_time = time.time()
         result = func(*arguments)
         end_time = time.time()
-        _logger().info("Finished executing function {}, it took {} seconds".format(func.__name__, end_time - start_time))
         return result
       def func_invoker(*args, **kwargs):
         """This is returned by the decorator and used to invoke the function."""
@@ -1350,13 +1316,11 @@ def get_arguments_for_execution(function, serialized_args, worker=global_worker)
   for (i, arg) in enumerate(serialized_args):
     if isinstance(arg, object_id.ObjectID):
       # get the object from the local object store
-      _logger().info("Getting argument {} for function {}.".format(i, function.__name__))
       argument = worker.get_object(arg)
       if isinstance(argument, RayTaskError):
         # If the result is a RayTaskError, then the task that created this
         # object failed, and we should propagate the error message here.
         raise RayGetArgumentError(function.__name__, i, arg, argument)
-      _logger().info("Successfully retrieved argument {} for function {}.".format(i, function.__name__))
     else:
       # pass the argument by value
       argument = serialization.deserialize_argument(arg)
