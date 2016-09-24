@@ -783,8 +783,6 @@ def import_thread(worker):
   try:
     worker.lock.acquire()
     export_keys = worker.redis_client.lrange("Exports", 0, -1)
-    if len(export_keys) > 0:
-      print "Some exports happened before the worker started."
     for key in export_keys:
       if key.startswith("RemoteFunction"):
         fetch_and_process_remote_function(key, worker=worker)
@@ -848,12 +846,6 @@ def connect(node_ip_address, redis_address, object_store_name, object_store_mana
   worker.redis_client = redis.StrictRedis(host=redis_host, port=redis_port)
   worker.lock = threading.Lock()
 
-  if mode in [WORKER_MODE, SILENT_MODE]:
-    t = threading.Thread(target=import_thread, args=(worker,))
-    # Making the thread a daemon causes it to exit when the main thread exits.
-    t.daemon = True
-    t.start()
-
   # Create an object store client.
   worker.plasma_client = plasma.PlasmaClient(object_store_name, node_ip_address, object_store_manager_port)
 
@@ -864,6 +856,12 @@ def connect(node_ip_address, redis_address, object_store_name, object_store_mana
     worker.redis_client.rpush("Workers", worker.worker_id)
   else:
     raise Exception("This code should be unreachable.")
+
+  if mode in [WORKER_MODE, SILENT_MODE]:
+    t = threading.Thread(target=import_thread, args=(worker,))
+    # Making the thread a daemon causes it to exit when the main thread exits.
+    t.daemon = True
+    t.start()
 
   random_string = "".join(np.random.choice(list(string.ascii_uppercase + string.digits)) for _ in range(10))
   cpp_log_file_name = config.get_log_file_path("-".join(["worker", random_string, "c++"]) + ".log")

@@ -91,7 +91,6 @@ def can_schedule(worker_id, task_id):
   task_info = cached_task_info[task_id]
   function_id = task_info["function_id"]
   if not cached_function_table.has_key(function_id):
-    #print "Function {} is not in cached_function_table.keys()".format(function_id)
     return False
   if cached_worker_info[worker_id]["export_counter"] < cached_function_info[function_id]["export_counter"]:
     return False
@@ -108,7 +107,6 @@ def schedule():
     for worker_id in available_workers:
       if can_schedule(worker_id, task_id):
         redis_client.rpush("TaskQueue:Worker{}".format(worker_id), task_id)
-        print "Scheduling task {} on worker {}".format(task_id, worker_id)
         scheduled_tasks.append(task_id)
         available_workers.remove(worker_id)
         break
@@ -157,8 +155,6 @@ if __name__ == "__main__":
 
   # Receive messages and process them.
   for msg in pubsub_client.listen():
-    #print msg
-    # Update cached data structures.
     if msg["channel"].startswith("__keyspace@0__:Object:"):
       object_key = msg["channel"].split(":", 1)[1]
       update_object_table(object_key)
