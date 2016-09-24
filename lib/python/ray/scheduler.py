@@ -150,8 +150,7 @@ if __name__ == "__main__":
     update_object_table(object_key)
 
   # Update the task queue.
-  for key in redis_client.scan_iter("TaskQueue:"):
-    pass
+  add_new_tasks()
 
   # Schedule anything that can be scheduled already.
   schedule()
