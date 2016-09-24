@@ -21,6 +21,7 @@ fi
 echo "building common"
 cd $TP_DIR/common
 make
+make test
 
 # echo "building halo"
 # cd $TP_DIR/halo
