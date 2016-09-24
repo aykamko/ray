@@ -25,8 +25,9 @@ available_workers = []
 
 def add_remote_function(key):
   function_id = key.split(":", 1)[1]
-  function_export_counter = int(redis_client.hget(key, "export_counter"))
-  num_return_vals = int(redis_client.hget(key, "num_return_vals"))
+  function_export_counter, num_return_vals = redis_client.hmget(key, ["export_counter", "num_return_vals"])
+  function_export_counter = int(function_export_counter)
+  num_return_vals = int(num_return_vals)
   cached_function_info[function_id] = {"export_counter": function_export_counter,
                                        "num_return_vals": num_return_vals}
 
