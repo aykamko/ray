@@ -22,9 +22,9 @@ echo "building common"
 cd $TP_DIR/common
 make
 
-echo "building halo"
-cd $TP_DIR/halo
-make
+# echo "building halo"
+# cd $TP_DIR/halo
+# make
 
 echo "building plasma"
 cd $TP_DIR/plasma
