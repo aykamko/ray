@@ -51,12 +51,22 @@ def update_object_table(object_key):
   cached_object_table[obj_id] = redis_client.lrange(object_key, 0, -1)
 
 def update_export_counter(worker_info_key):
-  """
-  worker_info_key has the form WorkerInfo:aba8b7a9b6a87
-  """
   worker_id = worker_info_key.split(":", 1)[1]
   cached_worker_info[worker_id]["export_counter"] = int(redis_client.hget(worker_info_key, "export_counter"))
 
+num_tasks_added = 0
+def add_new_tasks():
+  global num_tasks_added
+  new_task_ids = redis_client.lrange("GlobalTaskQueue", num_tasks_added, -1)
+  for task_id in new_task_ids:
+    unscheduled_tasks.append(task_id)
+    task_key = "graph:{}".format(task_id)
+    task_info = redis_client.hgetall(task_key)
+    function_id = task_info["function_id"]
+    dependencies = extract_dependencies(task_info)
+    cached_task_info[task_id] = {"function_id": function_id,
+                                 "dependencies": dependencies}
+    num_tasks_added += 1
 
 
 
@@ -64,9 +74,9 @@ def update_export_counter(worker_info_key):
 
 
 
-def function_id_and_dependencies(task_info):
-  #print "task_info is {}".format(task_info)
-  function_id = task_info["function_id"]
+
+
+def extract_dependencies(task_info):
   dependencies = []
   i = 0
   while True:
@@ -75,7 +85,7 @@ def function_id_and_dependencies(task_info):
     elif "arg:{}:val".format(i) not in task_info:
       break
     i += 1
-  return function_id, dependencies
+  return dependencies
 
 def can_schedule(worker_id, task_id):
   task_info = cached_task_info[task_id]
@@ -154,15 +164,7 @@ if __name__ == "__main__":
       object_key = msg["channel"].split(":", 1)[1]
       update_object_table(object_key)
     elif msg["channel"] == "__keyspace@0__:GlobalTaskQueue" and msg["data"] == "rpush":
-      # Update the list of unscheduled tasks and the cached task info.
-      #print "GlobalTaskQueue is {}".format(redis_client.lrange("GlobalTaskQueue", 0, -1))
-      task_id = redis_client.lpop("GlobalTaskQueue")
-      unscheduled_tasks.append(task_id)
-      task_key = "graph:{}".format(task_id)
-      task_info = redis_client.hgetall(task_key)
-      function_id, dependencies = function_id_and_dependencies(task_info)
-      cached_task_info[task_id] = {"function_id": function_id,
-                                   "dependencies": dependencies}
+      add_new_tasks()
     elif msg["channel"] == "__keyspace@0__:Workers":
       update_cached_workers()
     elif msg["channel"].startswith("__keyspace@0__:RemoteFunction:"):
