@@ -36,7 +36,10 @@ def update_cached_workers():
   for worker_id in new_worker_ids:
     cached_workers.append(worker_id)
     available_workers.append(worker_id)
-    cached_worker_info[worker_id] = {"export_counter": 0}
+    worker_info_key = "WorkerInfo:{}".format(worker_id)
+    export_counter = redis_client.hget(worker_info_key, "export_counter")
+    export_counter = int(export_counter) if export_counter is not None else 0
+    cached_worker_info[worker_id] = {"export_counter": export_counter}
 
 def update_function_table(function_table_key):
   function_id = function_table_key.split(":", 1)[1]
@@ -46,6 +49,16 @@ def update_object_table(object_key):
   # Update the cached object table.
   obj_id = object_key.split(":", 1)[1]
   cached_object_table[obj_id] = redis_client.lrange(object_key, 0, -1)
+
+def update_export_counter(worker_info_key):
+  """
+  worker_info_key has the form WorkerInfo:aba8b7a9b6a87
+  """
+  worker_id = worker_info_key.split(":", 1)[1]
+  cached_worker_info[worker_id]["export_counter"] = int(redis_client.hget(worker_info_key, "export_counter"))
+
+
+
 
 
 
@@ -79,6 +92,20 @@ def can_schedule(worker_id, task_id):
       return False
   return True
 
+def schedule():
+  scheduled_tasks = []
+  for task_id in unscheduled_tasks:
+    for worker_id in available_workers:
+      if can_schedule(worker_id, task_id):
+        redis_client.rpush("TaskQueue:Worker{}".format(worker_id), task_id)
+        print "Scheduling task {} on worker {}".format(task_id, worker_id)
+        scheduled_tasks.append(task_id)
+        available_workers.remove(worker_id)
+        break
+  # Remove the scheduled tasks.
+  for task_id in scheduled_tasks:
+    unscheduled_tasks.remove(task_id)
+
 if __name__ == "__main__":
   args = parser.parse_args()
 
@@ -93,14 +120,31 @@ if __name__ == "__main__":
   # call to pubsub.listen should be received in the pubsub_client.listen loop.
   pubsub_client.psubscribe("*")
 
-  # Get anything we may have missed.
-  # remote functions
-  # objects (there shouldn't be any)
-  # tasks
-  # workers
+  # Get anything that may have been pushed to Redis before we called psubscribe.
+  # Some of the things that we get here may be processed a second time in the
+  # event loop, so we have to handle that.
 
-  # ALSO SCHEDULE STUFF HERE :)
+  # First update cached worker info.
+  update_cached_workers()
 
+  # Update the function table.
+  for function_table_key in redis_client.scan_iter("FunctionTable:"):
+    update_function_table(function_table_key)
+
+  # Update the remote function info.
+  for remote_function_key in redis_client.scan_iter("RemoteFunction:"):
+    add_remote_function(key)
+
+  # Update the object table.
+  for object_key in redis_client.scan_iter("Object:"):
+    update_object_table(object_key)
+
+  # Update the task queue.
+  for key in redis_client.scan_iter("TaskQueue:"):
+    pass
+
+  # Schedule anything that can be scheduled already.
+  schedule()
 
   # Receive messages and process them.
   for msg in pubsub_client.listen():
@@ -128,8 +172,8 @@ if __name__ == "__main__":
       function_table_key = msg["channel"].split(":", 1)[1]
       update_function_table(function_table_key)
     elif msg["channel"].startswith("__keyspace@0__:WorkerInfo") and msg["data"] == "hincrby":
-      worker_id = msg["channel"].split(":")[2]
-      cached_worker_info[worker_id]["export_counter"] += 1
+      worker_info_key = msg["channel"].split(":", 1)[1]
+      update_export_counter(worker_info_key)
     elif msg["channel"] == "ReadyForNewTask":
       worker_id = msg["data"]
       available_workers.append(worker_id)
@@ -138,15 +182,4 @@ if __name__ == "__main__":
       continue
 
     # Schedule things that can be scheduled.
-    scheduled_tasks = []
-    for task_id in unscheduled_tasks:
-      for worker_id in available_workers:
-        if can_schedule(worker_id, task_id):
-          redis_client.rpush("TaskQueue:Worker{}".format(worker_id), task_id)
-          print "Scheduling task {} on worker {}".format(task_id, worker_id)
-          scheduled_tasks.append(task_id)
-          available_workers.remove(worker_id)
-          break
-    # Remove the scheduled tasks.
-    for task_id in scheduled_tasks:
-      unscheduled_tasks.remove(task_id)
+    schedule()
