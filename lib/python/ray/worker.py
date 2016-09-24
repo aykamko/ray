@@ -712,6 +712,7 @@ def print_error_messages(worker=global_worker):
 def fetch_and_process_remote_function(key, worker=global_worker):
   """Import a remote function."""
   function_id, function_name, serialized_function, num_return_vals, module = worker.redis_client.hmget(key, ["function_id", "name", "function", "num_return_vals", "module"])
+  num_return_vals = int(num_return_vals)
   try:
     function = pickling.loads(serialized_function)
   except:
