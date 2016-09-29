@@ -4,7 +4,7 @@ echo "Adding Ray to PYTHONPATH" 1>&2
 
 ROOT_DIR=$(cd "$(dirname "${BASH_SOURCE:-$0}")"; pwd)
 
-export PYTHONPATH="$ROOT_DIR/lib/python/:$ROOT_DIR/thirdparty/plasma/lib/python/:$ROOT_DIR/thirdparty/numbuf/build:$PYTHONPATH"
+export PYTHONPATH="$ROOT_DIR/lib/python/:$ROOT_DIR/thirdparty/plasma/lib/python/:$ROOT_DIR/thirdparty/numbuf/build:$ROOT_DIR/thirdparty/photon/lib/python:$PYTHONPATH"
 
 # Print instructions for adding Ray to your bashrc.
 unamestr="$(uname)"

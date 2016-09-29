@@ -64,6 +64,14 @@ def start_redis(port):
   if cleanup:
     all_processes.append(p)
 
+def start_local_scheduler(redis_address):
+  local_scheduler_filepath = os.path.join(os.path.dirname(os.path.abspath(__file__)), "../../../thirdparty/photon/build/photon_scheduler")
+  local_scheduler_name = "/tmp/scheduler{}".format(random.randint(0, 10000))
+  p = subprocess.Popen([local_scheduler_filepath, "-s", local_scheduler_name, "-r", redis_address])
+  if cleanup:
+    all_processes.append(p)
+  return local_scheduler_name
+
 def start_scheduler(redis_address, cleanup):
   """This method starts a scheduler process.
 
@@ -103,7 +111,7 @@ def start_objstore(node_ip_address, cleanup):
 
   return store_name, manager_port
 
-def start_worker(node_ip_address, redis_address, object_store_name, object_store_manager_port, worker_path, objstore_address=None, cleanup=True):
+def start_worker(node_ip_address, redis_address, object_store_name, object_store_manager_port, local_scheduler_name, worker_path, objstore_address=None, cleanup=True):
   """This method starts a worker process.
 
   Args:
@@ -122,6 +130,7 @@ def start_worker(node_ip_address, redis_address, object_store_name, object_store
              "--node-ip-address=" + node_ip_address,
              "--object-store-name=" + object_store_name,
              "--object-store-manager-port=" + str(object_store_manager_port),
+             "--local-scheduler-name=" + local_scheduler_name,
              "--redis-address=" + redis_address]
   if objstore_address is not None:
     command.append("--objstore-address=" + objstore_address)
@@ -176,6 +185,11 @@ def start_ray_local(node_ip_address="127.0.0.1", num_objstores=1, num_workers=0,
   redis_port = new_redis_port()
   redis_address = address(node_ip_address, redis_port)
   start_redis(redis_port)
+  time.sleep(0.1)
+
+  local_scheduler_name = start_local_scheduler(redis_address)
+  time.sleep(0.1)
+
   #scheduler_address = address(node_ip_address, new_scheduler_port())
   start_scheduler(redis_address, cleanup=True)
   time.sleep(0.1)
@@ -192,7 +206,7 @@ def start_ray_local(node_ip_address="127.0.0.1", num_objstores=1, num_workers=0,
       # remaining number of workers.
       num_workers_to_start = num_workers - (num_objstores - 1) * (num_workers / num_objstores)
     for _ in range(num_workers_to_start):
-      start_worker(node_ip_address, redis_address, object_store_name, object_store_manager_port, worker_path, cleanup=True)
+      start_worker(node_ip_address, redis_address, object_store_name, object_store_manager_port, local_scheduler_name, worker_path, cleanup=True)
     time.sleep(0.3)
 
-  return redis_address, object_store_info
+  return redis_address, object_store_info, local_scheduler_name

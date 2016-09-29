@@ -20,6 +20,7 @@ import serialization
 import graph
 import services
 import libnumbuf
+import photon
 import plasma
 
 SCRIPT_MODE = 0
@@ -636,7 +637,7 @@ def init(start_ray_local=False, num_workers=None, num_objstores=None, node_ip_ad
     num_objstores = 1 if num_objstores is None else num_objstores
     # Start the scheduler, object store, and some workers. These will be killed
     # by the call to cleanup(), which happens when the Python script exits.
-    redis_address, object_store_info = services.start_ray_local(num_objstores=num_objstores, num_workers=num_workers, worker_path=None)
+    redis_address, object_store_info, local_scheduler_name = services.start_ray_local(num_objstores=num_objstores, num_workers=num_workers, worker_path=None)
     object_store_name, object_store_manager_port = object_store_info[0]
   else:
     # In this case, there is an existing scheduler and object store, and we do
@@ -648,7 +649,7 @@ def init(start_ray_local=False, num_workers=None, num_objstores=None, node_ip_ad
   # Connect this driver to the scheduler and object store. The corresponing call
   # to disconnect will happen in the call to cleanup() when the Python script
   # exits.
-  connect(node_ip_address, redis_address, object_store_name, object_store_manager_port, worker=global_worker, mode=driver_mode)
+  connect(node_ip_address, redis_address, object_store_name, object_store_manager_port, local_scheduler_name, worker=global_worker, mode=driver_mode)
   return redis_address
 
 def cleanup(worker=global_worker):
@@ -812,7 +813,7 @@ def import_thread(worker):
     finally:
       worker.lock.release()
 
-def connect(node_ip_address, redis_address, object_store_name, object_store_manager_port, worker=global_worker, mode=WORKER_MODE):
+def connect(node_ip_address, redis_address, object_store_name, object_store_manager_port, local_scheduler_name, worker=global_worker, mode=WORKER_MODE):
   """Connect this worker to the scheduler and an object store.
 
   Args:
@@ -840,6 +841,9 @@ def connect(node_ip_address, redis_address, object_store_name, object_store_mana
 
   # Create an object store client.
   worker.plasma_client = plasma.PlasmaClient(object_store_name, node_ip_address, object_store_manager_port)
+
+  # Create the local scheduler client.
+  worker.scheduler_client = photon.PhotonClient(local_scheduler_name)
 
   # Register the worker with Redis.
   if mode == SCRIPT_MODE:
