@@ -447,14 +447,15 @@ class Worker(object):
 
     # Submit the task to Plasma.
     args_for_photon = []
-    for arg in enumerate(args):
+    for arg in args:
       if isinstance(arg, object_id.ObjectID):
         args_for_photon.append(arg)
       else:
         args_for_photon.append(put(arg))
     return_object_ids = [object_id.random_object_id() for _ in range(self.num_return_vals[function_id])]
     # TODO(rkn): Also pass return_object_ids into photon_client.submit.
-    self.photon_client.submit(function_id, args_for_photon, return_object_ids)
+    ids_for_photon = [arg.object_id for arg in args_for_photon]
+    self.photon_client.submit(function_id, ids_for_photon, return_object_ids)
 
     return return_object_ids
 
