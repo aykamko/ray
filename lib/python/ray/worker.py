@@ -419,6 +419,7 @@ class Worker(object):
         be object IDs or they can be values. If they are values, they
         must be serializable objecs.
     """
+    """
     task_id = random_id()
     key = "graph:{}".format(task_id)
     mapping = {}
@@ -442,8 +443,8 @@ class Worker(object):
 
     self.redis_client.hmset(key, mapping)
     self.redis_client.rpush("GlobalTaskQueue", task_id)
-
     """
+
     # Submit the task to Plasma.
     args_for_photon = []
     for arg in enumerate(args):
@@ -451,8 +452,9 @@ class Worker(object):
         args_for_photon.append(arg)
       else:
         args_for_photon.append(put(arg))
-    self.photon_client.submit(photon.make_id(function_id), args_for_photon)
-    """
+    return_object_ids = [object_id.random_object_id() for _ in range(self.num_return_vals[function_id])]
+    # TODO(rkn): Also pass return_object_ids into photon_client.submit.
+    self.photon_client.submit(function_id, args_for_photon, return_object_ids)
 
     return return_object_ids
 
@@ -595,7 +597,7 @@ def initialize_numbuf(worker=global_worker):
   def objectid_custom_serializer(obj):
     class_identifier = serialization.class_identifier(type(obj))
     contained_objectids.append(obj)
-    return obj.objectid
+    return obj.object_id
   def objectid_custom_deserializer(serialized_obj):
     return object_id.ObjectID(serialized_obj)
   serialization.add_class_to_whitelist(object_id.ObjectID, pickle=False, custom_serializer=objectid_custom_serializer, custom_deserializer=objectid_custom_deserializer)
@@ -1068,7 +1070,7 @@ def main_loop(worker=global_worker):
   raylib.ready_for_new_task(worker.handle)
   """
 
-  def process_task(function_id, function_name, args, return_object_ids): # wrapping these lines in a function should cause the local variables to go out of scope more quickly, which is useful for inspecting reference counts
+  def process_task(task): # wrapping these lines in a function should cause the local variables to go out of scope more quickly, which is useful for inspecting reference counts
     """Execute a task assigned to this worker.
 
     This method deserializes a task from the scheduler, and attempts to execute
@@ -1080,11 +1082,19 @@ def main_loop(worker=global_worker):
     accessed by the task.
     """
 
-    """
-    task_id = task.task_id
-    args = [arg_val for arg_type, arg_val in task.args]
-    return_object_ids = task.return_ids
-    """
+    function_id = task.function_id[:]
+    args = []
+    for arg_type, arg_val in task.args:
+      if arg_type == 0:
+        args.append(object_id.ObjectID(arg_val[:]))
+      elif arg_type == 1:
+        # TODO(rkn): Deserialize...
+        args.append(arg_val)
+      else:
+        raise Exception("This code should be unreachable.")
+    return_object_ids = [object_id.ObjectID(ret_id[:]) for ret_id in task.return_ids]
+
+    function_name = worker.function_names[function_id]
 
     try:
       arguments = get_arguments_for_execution(worker.functions[function_id], args, worker) # get args from objstore
@@ -1121,7 +1131,6 @@ def main_loop(worker=global_worker):
 
 
   while True:
-    """
     task = worker.photon_client.get_task()
     # TODO(rkn): Check that the number of imports we have is at least as great
     # as the export counter for the task. If not, wait until we have imported
@@ -1131,9 +1140,8 @@ def main_loop(worker=global_worker):
       process_task(task)
     finally:
       worker.lock.release()
-    """
 
-    #"""
+    """
     time.sleep(0.001)
     try:
       worker.lock.acquire()
@@ -1167,7 +1175,7 @@ def main_loop(worker=global_worker):
 
     finally:
       worker.lock.release()
-    #"""
+    """
 
 def _submit_task(function_id, func_name, args, worker=global_worker):
   """This is a wrapper around worker.submit_task.
