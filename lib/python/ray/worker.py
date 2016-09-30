@@ -7,6 +7,7 @@ import funcsigs
 import numpy as np
 import colorama
 import atexit
+import random
 import redis
 import threading
 import string
@@ -27,6 +28,9 @@ SCRIPT_MODE = 0
 WORKER_MODE = 1
 PYTHON_MODE = 2
 SILENT_MODE = 3
+
+def random_id():
+  return "".join([chr(random.randint(0, 255)) for _ in range(20)])
 
 contained_objectids = []
 def numbuf_serialize(value):
@@ -312,6 +316,7 @@ class Worker(object):
     """Initialize a Worker object."""
     self.functions = {}
     self.num_return_vals = {}
+    self.function_names = {}
     self.handle = None
     self.mode = None
     self.cached_remote_functions = []
@@ -401,7 +406,7 @@ class Worker(object):
     result = deserialized[0]
     return result
 
-  def submit_task(self, func_name, args):
+  def submit_task(self, function_id, func_name, args):
     """Submit a remote task to the scheduler.
 
     Tell the scheduler to schedule the execution of the function with name
@@ -414,8 +419,7 @@ class Worker(object):
         be object IDs or they can be values. If they are values, they
         must be serializable objecs.
     """
-    task_id = str(np.random.randint(0, 10000000))
-    function_id = func_name
+    task_id = random_id()
     key = "graph:{}".format(task_id)
     mapping = {}
     mapping["function_id"] = function_id
@@ -431,13 +435,25 @@ class Worker(object):
           mapping["arg:{}:id".format(i)] = put(arg)
 
     # Generate some return object IDs.
-    return_object_ids = [object_id.random_object_id() for _ in range(self.num_return_vals[func_name])]
+    return_object_ids = [object_id.random_object_id() for _ in range(self.num_return_vals[function_id])]
     # Put the return values in Redis.
     for i, obj_id in enumerate(return_object_ids):
       mapping["return_id:{}".format(i)] = obj_id.object_id
 
     self.redis_client.hmset(key, mapping)
     self.redis_client.rpush("GlobalTaskQueue", task_id)
+
+    """
+    # Submit the task to Plasma.
+    args_for_photon = []
+    for arg in enumerate(args):
+      if isinstance(arg, object_id.ObjectID):
+        args_for_photon.append(arg)
+      else:
+        args_for_photon.append(put(arg))
+    self.photon_client.submit(photon.make_id(function_id), args_for_photon)
+    """
+
     return return_object_ids
 
   def run_function_on_all_workers(self, function):
@@ -723,6 +739,8 @@ def fetch_and_process_remote_function(key, worker=global_worker):
     function.__module__ = module
     function_name = "{}.{}".format(function.__module__, function.__name__)
     worker.functions[function_id] = remote(num_return_vals=num_return_vals)(function)
+    worker.function_names[function_id] = function_id
+    worker.num_return_vals[function_id] = num_return_vals
     # Noify the scheduler that the remote function imported successfully.
     # We pass an empty error message string because the import succeeded.
     # TODO(rkn): The below needs to identify the worker somehow...
@@ -843,7 +861,7 @@ def connect(node_ip_address, redis_address, object_store_name, object_store_mana
   worker.plasma_client = plasma.PlasmaClient(object_store_name, node_ip_address, object_store_manager_port)
 
   # Create the local scheduler client.
-  worker.scheduler_client = photon.PhotonClient(local_scheduler_name)
+  worker.photon_client = photon.PhotonClient(local_scheduler_name)
 
   # Register the worker with Redis.
   if mode == SCRIPT_MODE:
@@ -1062,9 +1080,14 @@ def main_loop(worker=global_worker):
     accessed by the task.
     """
 
-    #function_name, serialized_args, return_objectids = task
+    """
+    task_id = task.task_id
+    args = [arg_val for arg_type, arg_val in task.args]
+    return_object_ids = task.return_ids
+    """
+
     try:
-      arguments = get_arguments_for_execution(worker.functions[function_name], args, worker) # get args from objstore
+      arguments = get_arguments_for_execution(worker.functions[function_id], args, worker) # get args from objstore
       outputs = worker.functions[function_id].executor(arguments) # execute the function
       if len(return_object_ids) == 1:
         outputs = (outputs,)
@@ -1098,8 +1121,20 @@ def main_loop(worker=global_worker):
 
 
   while True:
+    """
+    task = worker.photon_client.get_task()
+    # TODO(rkn): Check that the number of imports we have is at least as great
+    # as the export counter for the task. If not, wait until we have imported
+    # enough.
+    try:
+      worker.lock.acquire()
+      process_task(task)
+    finally:
+      worker.lock.release()
+    """
 
-    time.sleep(0.0001)
+    #"""
+    time.sleep(0.001)
     try:
       worker.lock.acquire()
       if worker.redis_client.llen(worker_task_queue) > num_tasks:
@@ -1108,7 +1143,7 @@ def main_loop(worker=global_worker):
 
         task_info = worker.redis_client.hgetall(key)
         function_id = task_info["function_id"]
-        function_name = function_id
+        function_name = worker.function_names[function_id]
 
         arg_keys = [k for k, v in task_info.items() if k.startswith("arg")]
         num_args = len(arg_keys)
@@ -1132,8 +1167,9 @@ def main_loop(worker=global_worker):
 
     finally:
       worker.lock.release()
+    #"""
 
-def _submit_task(func_name, args, worker=global_worker):
+def _submit_task(function_id, func_name, args, worker=global_worker):
   """This is a wrapper around worker.submit_task.
 
   We use this wrapper so that in the remote decorator, we can call _submit_task
@@ -1141,7 +1177,7 @@ def _submit_task(func_name, args, worker=global_worker):
   serialize remote functions, we don't attempt to serialize the worker object,
   which cannot be serialized.
   """
-  return worker.submit_task(func_name, args)
+  return worker.submit_task(function_id, func_name, args)
 
 def _mode(worker=global_worker):
   """This is a wrapper around worker.mode.
@@ -1175,6 +1211,9 @@ def _export_reusable_variable(name, reusable, worker=global_worker):
 def export_remote_function(function_id, func_name, func, num_return_vals, worker=global_worker):
   key = "RemoteFunction:{}".format(function_id)
 
+  worker.num_return_vals[function_id] = num_return_vals
+
+
   pickled_func = pickling.dumps(func)
   worker.redis_client.hmset(key, {"function_id": function_id,
                                   "name": func_name,
@@ -1207,7 +1246,7 @@ def remote(*args, **kwargs):
           # arguments to prevent the function call from mutating them and to match
           # the usual behavior of immutable remote objects.
           return func(*copy.deepcopy(args))
-        objectids = _submit_task(func_name, args)
+        objectids = _submit_task(function_id, func_name, args)
         if len(objectids) == 1:
           return objectids[0]
         elif len(objectids) > 1:
@@ -1225,7 +1264,6 @@ def remote(*args, **kwargs):
       func_invoker.executor = func_executor
       func_invoker.is_remote = True
       func_name = "{}.{}".format(func.__module__, func.__name__)
-      function_id = func_name
       func_invoker.func_name = func_name
       func_invoker.func_doc = func.func_doc
 
@@ -1248,11 +1286,11 @@ def remote(*args, **kwargs):
           # Undo our changes
           if func_name_global_valid: func.__globals__[func.__name__] = func_name_global_value
           else: del func.__globals__[func.__name__]
+      function_id = random_id()
       if worker.mode in [SCRIPT_MODE, SILENT_MODE]:
         export_remote_function(function_id, func_name, func, num_return_vals)
       elif worker.mode is None:
         worker.cached_remote_functions.append((function_id, func_name, func, num_return_vals))
-      worker.num_return_vals[func_name] = num_return_vals
       return func_invoker
 
     return remote_decorator
