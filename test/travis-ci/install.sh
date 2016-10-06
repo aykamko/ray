@@ -24,4 +24,6 @@ else
   # Mac OS X test
   ./install-dependencies.sh
   ./setup.sh
+  cd lib/python
+  python setup.py install --user
 fi

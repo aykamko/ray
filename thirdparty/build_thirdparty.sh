@@ -18,14 +18,19 @@ else
   exit 1
 fi
 
-echo "building common"
-cd $TP_DIR/common
+echo "building photon"
+cd $TP_DIR/photon
+# Build the common submodule first.
+cd common
 make
 make test
-
-# echo "building halo"
-# cd $TP_DIR/halo
-# make
+cd lib/python
+python setup.py install --user
+cd ../../..
+# Now build photon.
+make
+cd lib/python
+python setup.py install --user
 
 echo "building plasma"
 cd $TP_DIR/plasma
@@ -45,7 +50,3 @@ mkdir -p build
 cd $TP_DIR/numbuf/build
 cmake ..
 make VERBOSE=1 -j$PARALLEL
-
-echo "building hiredis"
-cd $TP_DIR/hiredis
-make

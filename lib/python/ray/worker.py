@@ -14,7 +14,6 @@ import string
 import weakref
 
 # Ray modules
-import object_id
 import config
 import pickling
 import serialization
@@ -30,7 +29,7 @@ PYTHON_MODE = 2
 SILENT_MODE = 3
 
 def random_id():
-  return "".join([chr(random.randint(0, 255)) for _ in range(20)])
+  return photon.ObjectID("".join([chr(random.randint(0, 255)) for _ in range(20)]))
 
 contained_objectids = []
 def numbuf_serialize(value):
@@ -359,13 +358,13 @@ class Worker(object):
     # Serialize and put the object
     schema, size, serialized = numbuf_serialize(value)
     size = size + 4096 * 4 + 8 # The last 8 bytes are for the metadata offset. This is temporary.
-    buff = self.plasma_client.create(objectid.object_id, size, buffer(schema))
+    buff = self.plasma_client.create(objectid.id(), size, buffer(schema))
     data = np.frombuffer(buff, dtype="byte")[8:]
     metadata_offset = libnumbuf.write_to_buffer(serialized, memoryview(data))
     np.frombuffer(buff, dtype="int64", count=1)[0] = metadata_offset
-    self.plasma_client.seal(objectid.object_id)
+    self.plasma_client.seal(objectid.id())
 
-    key = "Object:{}".format(objectid.object_id)
+    key = "Object:{}".format(objectid.id())
     object_store_id = 0 # TODO(rkn): This only works when there is one object store. This is temporary.
     self.redis_client.rpush(key, object_store_id)
 
@@ -382,8 +381,8 @@ class Worker(object):
     Args:
       objectid (object_id.ObjectID): The object ID of the value to retrieve.
     """
-    buff = self.plasma_client.get(objectid.object_id)
-    metadata = self.plasma_client.get_metadata(objectid.object_id)
+    buff = self.plasma_client.get(objectid.id())
+    metadata = self.plasma_client.get_metadata(objectid.id())
     metadata_size = len(metadata)
     data = np.frombuffer(buff, dtype="byte")[8:]
     metadata_offset = int(np.frombuffer(buff, dtype="int64", count=1)[0])
@@ -397,10 +396,10 @@ class Worker(object):
     # it inside the assignement it would immediately go out of scope.
     object_fixture = None
     segmentid = 1234 # TODO(rkn): Get a real segment id!!
-    if objectid.object_id not in object_fixtures:
+    if objectid.id() not in object_fixtures:
       object_fixture = ObjectFixture(objectid, segmentid, self.handle)
-      object_fixtures[objectid.object_id] = object_fixture
-    deserialized = libnumbuf.deserialize_list(serialized, object_fixtures[objectid.object_id])
+      object_fixtures[objectid.id()] = object_fixture
+    deserialized = libnumbuf.deserialize_list(serialized, object_fixtures[objectid.id()])
     # Unwrap the object from the list (it was wrapped put_object)
     assert len(deserialized) == 1
     result = deserialized[0]
@@ -445,19 +444,22 @@ class Worker(object):
     self.redis_client.rpush("GlobalTaskQueue", task_id)
     """
 
-    # Submit the task to Plasma.
+    # Put large or complex arguments that are passed by value in the object
+    # store first.
     args_for_photon = []
     for arg in args:
-      if isinstance(arg, object_id.ObjectID):
+      if isinstance(arg, photon.ObjectID):
+        args_for_photon.append(arg)
+      elif photon.check_simple_value(arg):
         args_for_photon.append(arg)
       else:
         args_for_photon.append(put(arg))
-    return_object_ids = [object_id.random_object_id() for _ in range(self.num_return_vals[function_id])]
-    # TODO(rkn): Also pass return_object_ids into photon_client.submit.
-    ids_for_photon = [arg.object_id for arg in args_for_photon]
-    self.photon_client.submit(function_id, ids_for_photon, return_object_ids)
 
-    return return_object_ids
+    # Submit the task to Photon.
+    task = photon.Task(function_id, args_for_photon, self.num_return_vals[function_id.id()])
+    self.photon_client.submit(task)
+
+    return task.returns()
 
   def run_function_on_all_workers(self, function):
     """Run arbitrary code on all of the workers.
@@ -598,10 +600,10 @@ def initialize_numbuf(worker=global_worker):
   def objectid_custom_serializer(obj):
     class_identifier = serialization.class_identifier(type(obj))
     contained_objectids.append(obj)
-    return obj.object_id
+    return obj.id()
   def objectid_custom_deserializer(serialized_obj):
-    return object_id.ObjectID(serialized_obj)
-  serialization.add_class_to_whitelist(object_id.ObjectID, pickle=False, custom_serializer=objectid_custom_serializer, custom_deserializer=objectid_custom_deserializer)
+    return photon.ObjectID(serialized_obj)
+  serialization.add_class_to_whitelist(photon.ObjectID, pickle=False, custom_serializer=objectid_custom_serializer, custom_deserializer=objectid_custom_deserializer)
 
   if worker.mode in [SCRIPT_MODE, SILENT_MODE]:
     # These should only be called on the driver because register_class will
@@ -727,7 +729,8 @@ def print_error_messages(worker=global_worker):
 
 def fetch_and_process_remote_function(key, worker=global_worker):
   """Import a remote function."""
-  function_id, function_name, serialized_function, num_return_vals, module = worker.redis_client.hmget(key, ["function_id", "name", "function", "num_return_vals", "module"])
+  function_id_str, function_name, serialized_function, num_return_vals, module = worker.redis_client.hmget(key, ["function_id", "name", "function", "num_return_vals", "module"])
+  function_id = photon.ObjectID(function_id_str)
   num_return_vals = int(num_return_vals)
   try:
     function = pickling.loads(serialized_function)
@@ -741,13 +744,13 @@ def fetch_and_process_remote_function(key, worker=global_worker):
     # TODO(rkn): Why is the below line necessary?
     function.__module__ = module
     function_name = "{}.{}".format(function.__module__, function.__name__)
-    worker.functions[function_id] = remote(num_return_vals=num_return_vals)(function)
-    worker.function_names[function_id] = function_id
-    worker.num_return_vals[function_id] = num_return_vals
+    worker.functions[function_id.id()] = remote(num_return_vals=num_return_vals)(function)
+    worker.function_names[function_id.id()] = function_id
+    worker.num_return_vals[function_id.id()] = num_return_vals
     # Noify the scheduler that the remote function imported successfully.
     # We pass an empty error message string because the import succeeded.
     # TODO(rkn): The below needs to identify the worker somehow...
-    worker.redis_client.rpush("FunctionTable:{}".format(function_id), worker.worker_id)
+    worker.redis_client.rpush("FunctionTable:{}".format(function_id.id()), worker.worker_id)
 
 def fetch_and_process_reusable_variable(key, worker=global_worker):
   """Import a reusable variable."""
@@ -787,18 +790,29 @@ def import_thread(worker):
   worker.pubsub_client = worker.redis_client.pubsub()
   # Exports that are published after the call to pubsub_client.psubscribe and
   # before the call to pubsub_client.listen will still be processed in the loop.
+  sys.stdout.flush()
   worker.pubsub_client.psubscribe("__keyspace@0__:Exports")
+  sys.stdout.flush()
 
   worker_info_key = "WorkerInfo:{}".format(worker.worker_id)
+  sys.stdout.flush()
+
   worker.redis_client.hset(worker_info_key, "export_counter", 0)
+  sys.stdout.flush()
+
   num_imported = 0
+  sys.stdout.flush()
 
   # Get the exports that occurred before the call to psubscribe.
   try:
+    sys.stdout.flush()
+
     worker.lock.acquire()
     export_keys = worker.redis_client.lrange("Exports", 0, -1)
     for key in export_keys:
       if key.startswith("RemoteFunction"):
+        sys.stdout.flush()
+
         fetch_and_process_remote_function(key, worker=worker)
       elif key.startswith("ReusableVariables"):
         fetch_and_process_reusable_variable(key, worker=worker)
@@ -992,7 +1006,7 @@ def put(value, worker=global_worker):
   check_connected(worker)
   if worker.mode == PYTHON_MODE:
     return value # In PYTHON_MODE, ray.put is the identity operation
-  objectid = object_id.random_object_id()
+  objectid = random_id()
   worker.put_object(objectid, value)
   return objectid
 
@@ -1083,23 +1097,16 @@ def main_loop(worker=global_worker):
     accessed by the task.
     """
 
-    function_id = task.function_id[:]
-    args = []
-    for arg_type, arg_val in task.args:
-      if arg_type == 0:
-        args.append(object_id.ObjectID(arg_val[:]))
-      elif arg_type == 1:
-        # TODO(rkn): Deserialize...
-        args.append(arg_val)
-      else:
-        raise Exception("This code should be unreachable.")
-    return_object_ids = [object_id.ObjectID(ret_id[:]) for ret_id in task.return_ids]
+    function_id = task.function_id()
+    args = task.arguments()
+    return_object_ids = task.returns()
+    print "RETURNS ARE " + str([r.id() for r in return_object_ids])
 
-    function_name = worker.function_names[function_id]
+    function_name = worker.function_names[function_id.id()]
 
     try:
-      arguments = get_arguments_for_execution(worker.functions[function_id], args, worker) # get args from objstore
-      outputs = worker.functions[function_id].executor(arguments) # execute the function
+      arguments = get_arguments_for_execution(worker.functions[function_id.id()], args, worker) # get args from objstore
+      outputs = worker.functions[function_id.id()].executor(arguments) # execute the function
       if len(return_object_ids) == 1:
         outputs = (outputs,)
       store_outputs_in_objstore(return_object_ids, outputs, worker) # store output in local object store
@@ -1218,13 +1225,13 @@ def _export_reusable_variable(name, reusable, worker=global_worker):
   worker.export_counter += 1
 
 def export_remote_function(function_id, func_name, func, num_return_vals, worker=global_worker):
-  key = "RemoteFunction:{}".format(function_id)
+  key = "RemoteFunction:{}".format(function_id.id())
 
-  worker.num_return_vals[function_id] = num_return_vals
+  worker.num_return_vals[function_id.id()] = num_return_vals
 
 
   pickled_func = pickling.dumps(func)
-  worker.redis_client.hmset(key, {"function_id": function_id,
+  worker.redis_client.hmset(key, {"function_id": function_id.id(),
                                   "name": func_name,
                                   "module": func.__module__,
                                   "function": pickled_func,
@@ -1365,7 +1372,7 @@ def get_arguments_for_execution(function, serialized_args, worker=global_worker)
   """
   arguments = []
   for (i, arg) in enumerate(serialized_args):
-    if isinstance(arg, object_id.ObjectID):
+    if isinstance(arg, photon.ObjectID):
       # get the object from the local object store
       argument = worker.get_object(arg)
       if isinstance(argument, RayTaskError):
@@ -1374,7 +1381,7 @@ def get_arguments_for_execution(function, serialized_args, worker=global_worker)
         raise RayGetArgumentError(function.__name__, i, arg, argument)
     else:
       # pass the argument by value
-      argument = serialization.deserialize_argument(arg)
+      argument = arg
 
     arguments.append(argument)
   return arguments
@@ -1398,8 +1405,10 @@ def store_outputs_in_objstore(objectids, outputs, worker=global_worker):
       wrapped in a tuple with one element prior to being passed into this
       function.
   """
+  print "OUTPUTS ARE " + str(outputs)
   for i in range(len(objectids)):
-    if isinstance(outputs[i], object_id.ObjectID):
+    if isinstance(outputs[i], photon.ObjectID):
       raise Exception("This remote function returned an ObjectID as its {}th return value. This is not allowed.".format(i))
   for i in range(len(objectids)):
+    print "PUTTING " + str(outputs[i])
     worker.put_object(objectids[i], outputs[i])

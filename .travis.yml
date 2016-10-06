@@ -4,16 +4,25 @@ language: generic
 
 matrix:
   include:
-    - os: linux
-      dist: trusty
+#    - os: linux
+#      dist: trusty
+#      python: "2.7"
+#    - os: linux
+#      dist: trusty
+#      python: "3.5"
     - os: osx
       osx_image: xcode7
+      python: "2.7"
+    - os: osx
+      osx_image: xcode7
+      python: "3.5"
 
 services:
   - docker
 
 install:
   - ./test/travis-ci/install.sh
+  - source setup-env.sh
 
 script:
   - ./test/travis-ci/run_test.sh --docker-image=ray-project/ray:test-base 'source setup-env.sh && cd test && python runtest.py'
