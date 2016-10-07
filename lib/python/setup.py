@@ -7,6 +7,6 @@ import setuptools
 
 setup(name="ray",
       version="0.1",
-      packages=["ray"],
+      py_modules=["ray"],
       zip_safe=False
 )
