@@ -11,15 +11,16 @@ install_requires=[#"numpy",
                   "colorama",
                   "graphviz",
                   "redis",
-                  "cloudpickle==0.2.1"],
+                  "cloudpickle"],
 
-dependency_links=[
-  "https://github.com/cloudpipe/cloudpickle/tarball/0d225a4695f1f65ae1cbb2e0bbc145e10167cce4#egg=cloudpickle-0.2.1"
-]
+#dependency_links=[
+#  "https://github.com/cloudpipe/cloudpickle/tarball/0d225a4695f1f65ae1cbb2e0bbc145e10167cce4#egg=cloudpickle-0.2.1"
+#]
 
 setup(name="ray",
       version="0.1",
       packages=find_packages(),
       zip_safe=False,
       install_requires=install_requires,
-      dependency_links=dependency_links)
+      #dependency_links=dependency_links
+)
