@@ -1,7 +1,7 @@
 import os
 import sys
 import time
-import subprocess32 as subprocess
+import subprocess
 import string
 import random
 
