@@ -21,6 +21,9 @@ services:
   - docker
 
 install:
+  - sudo easy_install pip
+  - sudo pip install numpy funcsigs protobuf colorama graphviz redis --ignore-installed six
+  - sudo pip install --upgrade git+git://github.com/cloudpipe/cloudpickle.git@0d225a4695f1f65ae1cbb2e0bbc145e10167cce4
   - ./test/travis-ci/install.sh
   - source setup-env.sh
 

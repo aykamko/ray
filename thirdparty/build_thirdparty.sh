@@ -25,12 +25,12 @@ cd common
 make
 make test
 cd lib/python
-python setup.py install --user
+sudo python setup.py install --user
 cd ../../..
 # Now build photon.
 make
 cd lib/python
-python setup.py install --user
+sudo python setup.py install --user
 
 echo "building plasma"
 cd $TP_DIR/plasma
