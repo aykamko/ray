@@ -25,6 +25,6 @@ else
   ./install-dependencies.sh
   ./setup.sh
   cd lib/python
-  pip install setuptools --upgrade --user
+  wget https://bootstrap.pypa.io/ez_setup.py -O - | python - --user
   python setup.py install --user
 fi
