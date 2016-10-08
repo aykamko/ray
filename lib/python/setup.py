@@ -5,7 +5,7 @@ import setuptools
 
 # Because of relative paths, this must be run from inside ray/lib/python/.
 
-install_requires=["numpy",
+install_requires=[#"numpy",
                   "funcsigs",
                   "protobuf",
                   "colorama",

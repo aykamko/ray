@@ -25,5 +25,6 @@ else
   ./install-dependencies.sh
   ./setup.sh
   cd lib/python
+  pip install setuptools --upgrade --user
   python setup.py install --user
 fi
