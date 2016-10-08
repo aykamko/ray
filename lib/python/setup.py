@@ -19,7 +19,7 @@ dependency_links=[
 
 setup(name="ray",
       version="0.1",
-      packages=["ray"],
+      packages=find_packages(),
       zip_safe=False,
       install_requires=install_requires,
       dependency_links=dependency_links)
