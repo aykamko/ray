@@ -26,5 +26,5 @@ else
   ./setup.sh
   cd lib/python
   #wget https://bootstrap.pypa.io/ez_setup.py -O - | python - --user
-  sudo python setup.py install --user
+  sudo python setup.py install
 fi
