@@ -1287,23 +1287,21 @@ def store_outputs_in_objstore(objectids, outputs, worker=global_worker):
     worker.put_object(objectids[i], outputs[i])
 
 # Source: http://stackoverflow.com/a/6798042
-class Singleton(type):
-    _instances = {}
-    def __call__(cls, *args, **kwargs):
-        if cls not in cls._instances:
-            cls._instances[cls] = super(Singleton, cls).__call__(*args, **kwargs)
-        return cls._instances[cls]
+# class Singleton(type):
+#     _instances = {}
+#     def __call__(cls, *args, **kwargs):
+#         if cls not in cls._instances:
+#             cls._instances[cls] = super(Singleton, cls).__call__(*args, **kwargs)
+#         return cls._instances[cls]
 
 class KeyValueStore(object):
-    __metaclass__ = Singleton
+    # __metaclass__ = Singleton
 
-    def __init__(self, worker=global_worker):
+    def __init__(self, worker=global_worker, dict_objid=None):
+        check_connected(worker)
         self.dict = {}
         self.dict_objid = None
         self.worker = worker
-
-    def __len__(self):
-        pass
 
     def __getitem__(self, key):
         if self.dict_objid is not None:
@@ -1312,12 +1310,10 @@ class KeyValueStore(object):
 
     def __setitem__(self, key, value):
         self.dict[key] = value
-        if self.dict_objid is None:
-            self.dict_objid = raylib.get_objectid(self.worker.handle)
+        # if self.dict_objid is None:
+        #     self.dict_objid = raylib.get_objectid(self.worker.handle)
+        self.dict_objid = raylib.get_objectid(self.worker.handle)
         self.worker.put_object(self.dict_objid, self.dict)
         return value
 
-    def __delitem__(self, key):
-        r = self.dict[key]
-        del self.dict[key]
-        return r
+# kv = KeyValueStore()
