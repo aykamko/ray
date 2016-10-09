@@ -16,3 +16,4 @@ from worker import Reusable, reusables
 from libraylib import SCRIPT_MODE, WORKER_MODE, PYTHON_MODE, SILENT_MODE
 from libraylib import ObjectID
 import internal
+from worker import KeyValueStore
